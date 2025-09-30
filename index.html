@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Mars Rover Waste Collection Simulator</title>
+<style>
+  body, html {
+    margin: 0; padding: 0; overflow: hidden; background: #000;
+    font-family: Arial, sans-serif;
+    color: white;
+  }
+  #infoPanel {
+    position: absolute;
+    top: 10px; left: 10px;
+    background: rgba(0,0,0,0.7);
+    padding: 10px;
+    border-radius: 8px;
+    max-width: 300px;
+  }
+  #infoPanel h2 {
+    margin-top: 0;
+  }
+  #wasteInventory {
+    margin-top: 10px;
+  }
+  #instructions {
+    position: absolute;
+    bottom: 10px; left: 10px;
+    background: rgba(0,0,0,0.7);
+    padding: 10px;
+    border-radius: 8px;
+    max-width: 300px;
+    font-size: 14px;
+  }
+</style>
+</head>
+<body>
+<div id="infoPanel">
+  <h2>Rover Waste Inventory</h2>
+  <div id="wasteInventory">
+    Plastic: 0<br />
+    Metal: 0<br />
+    Organic: 0
+  </div>
+  <h3>Recycle Machine Output</h3>
+  <div id="recycleOutput">
+    Filament: 0<br />
+    Ingots: 0<br />
+    Fuel: 0
+  </div>
+</div>
+<div id="instructions">
+  <b>Controls:</b><br />
+  Arrow keys or WASD to move rover<br />
+  Space to pick up waste<br />
+  R to recycle waste at machine<br />
+  Mouse to orbit camera
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.152.2/examples/js/controls/OrbitControls.js"></script>
+<script>
+  // Basic setup
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x220000);
+
+  const camera = new THREE.PerspectiveCamera(60, window.innerWidth/window.innerHeight, 0.1, 1000);
+  camera.position.set(0, 20, 30);
+
+  const renderer = new THREE.WebGLRenderer({antialias:true});
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  document.body.appendChild(renderer.domElement);
+
+  // Orbit controls for camera
+  const controls = new THREE.OrbitControls(camera, renderer.domElement);
+  controls.target.set(0, 0, 0);
+  controls.update();
+
+  // Lighting
+  const ambientLight = new THREE.AmbientLight(0x888888);
+  scene.add(ambientLight);
+
+  const directionalLight = new THREE.DirectionalLight(0xffccaa, 1);
+  directionalLight.position.set(10, 20, 10);
+  scene.add(directionalLight);
+
+  // Mars surface (plane with reddish texture)
+  const marsGeometry = new THREE.PlaneGeometry(50, 50, 32, 32);
+  const marsMaterial = new THREE.MeshStandardMaterial({color: 0x8B4513, roughness: 1});
+  const mars = new THREE.Mesh(marsGeometry, marsMaterial);
+  mars.rotation.x = -Math.PI / 2;
+  scene.add(mars);
+
+  // Add some bumps to simulate terrain
+  for(let i=0; i<marsGeometry.attributes.position.count; i++) {
+    const y = (Math.random() - 0.5) * 0.5;
+    marsGeometry.attributes.position.setY(i, y);
+  }
+  marsGeometry.computeVertexNormals();
+  marsGeometry.attributes.position.needsUpdate = true;
+
+  // Rover (simple box)
+  const roverGeometry = new THREE.BoxGeometry(1.5, 1, 2);
+  const roverMaterial = new THREE.MeshStandardMaterial({color: 0x5555ff});
+  const rover = new THREE.Mesh(roverGeometry, roverMaterial);
+  rover.position.set(0, 0.5, 0);
+  scene.add(rover);
+
+  // Waste types and colors
+  const wasteTypes = {
+    plastic: {color: 0x00ffcc},
+    metal: {color: 0xaaaaaa},
+    organic: {color: 0x228822}
+  };
+
+  // Waste objects array
+  const wastes = [];
+
+  // Create waste objects scattered on Mars surface
+  function createWaste(type, x, z) {
+    const geometry = new THREE.SphereGeometry(0.3, 12, 12);
+    const material = new THREE.MeshStandardMaterial({color: wasteTypes[type].color});
+    const waste = new THREE.Mesh(geometry, material);
+    waste.position.set(x, 0.3, z);
+    waste.userData = {type: type, collected: false};
+    scene.add(waste);
+    wastes.push(waste);
+  }
+
+  // Scatter wastes randomly
+  for(let i=0; i<15; i++) {
+    const types = Object.keys(wasteTypes);
+    const type = types[Math.floor(Math.random()*types.length)];
+    const x = (Math.random() - 0.5) * 40;
+    const z = (Math.random() - 0.5) * 40;
+    createWaste(type, x, z);
+  }
+
+  // Recycle machine (box with different color)
+  const recycleGeometry = new THREE.BoxGeometry(3, 3, 3);
+  const recycleMaterial = new THREE.MeshStandardMaterial({color: 0xffaa00});
+  const recycleMachine = new THREE.Mesh(recycleGeometry, recycleMaterial);
+  recycleMachine.position.set(20, 1.5, 20);
+  scene.add(recycleMachine);
+
+  // Rover inventory
+  const inventory = {
+    plastic: 0,
+    metal: 0,
+    organic: 0
+  };
+
+  // Recycle machine output
+  const recycleOutput = {
+    filament: 0,
+    ingots: 0,
+    fuel: 0
+  };
+
+  // UI update function
+  function updateUI() {
+    document.getElementById('wasteInventory').innerHTML =
+      `Plastic: ${inventory.plastic}<br />` +
+      `Metal: ${inventory.metal}<br />` +
+      `Organic: ${inventory.organic}`;
+    document.getElementById('recycleOutput').innerHTML =
+      `Filament: ${recycleOutput.filament}<br />` +
+      `Ingots: ${recycleOutput.ingots}<br />` +
+      `Fuel: ${recycleOutput.fuel}`;
+  }
+
+  updateUI();
+
+  // Movement variables
+  const moveSpeed = 0.2;
+  const keysPressed = {};
+
+  window.addEventListener('keydown', (e) => {
+    keysPressed[e.key.toLowerCase()] = true;
+  });
+  window.addEventListener('keyup', (e) => {
+    keysPressed[e.key.toLowerCase()] = false;
+  });
+
+  // Distance helper
+  function distance(a, b) {
+    return Math.sqrt(
+      (a.x - b.x)**2 +
+      (a.z - b.z)**2
+    );
+  }
+
+  // Pick up waste function
+  function pickUpWaste() {
+    // Check wastes near rover
+    for(let waste of wastes) {
+      if(waste.userData.collected) continue;
+      if(distance(rover.position, waste.position) < 2) {
+        // Pick up
+        waste.userData.collected = true;
+        scene.remove(waste);
+        inventory[waste.userData.type]++;
+        updateUI();
+        break;
+      }
+    }
+  }
+
+  // Recycle function
+  function recycleWaste() {
+    // Check if rover near recycle machine
+    if(distance(rover.position, recycleMachine.position) < 4) {
+      // Convert inventory to outputs
+      recycleOutput.filament += inventory.plastic;
+      recycleOutput.ingots += inventory.metal;
+      recycleOutput.fuel += inventory.organic;
+
+      // Clear inventory
+      inventory.plastic = 0;
+      inventory.metal = 0;
+      inventory.organic = 0;
+      updateUI();
+      alert("Waste recycled successfully!");
+    } else {
+      alert("Move rover closer to recycle machine to recycle.");
+    }
+  }
+
+  // Listen for space (pick up) and R (recycle)
+  window.addEventListener('keydown', (e) => {
+    if(e.code === 'Space') {
+      pickUpWaste();
+    }
+    if(e.key.toLowerCase() === 'r') {
+      recycleWaste();
+    }
+  });
+
+  // Animate loop
+  function animate() {
+    requestAnimationFrame(animate);
+
+    // Move rover based on keys
+    let moved = false;
+    if(keysPressed['arrowup'] || keysPressed['w']) {
+      rover.position.x -= Math.sin(rover.rotation.y) * moveSpeed;
+      rover.position.z -= Math.cos(rover.rotation.y) * moveSpeed;
+      moved = true;
+    }
+    if(keysPressed['arrowdown'] || keysPressed['s']) {
+      rover.position.x += Math.sin(rover.rotation.y) * moveSpeed;
+      rover.position.z += Math.cos(rover.rotation.y) * moveSpeed;
+      moved = true;
+    }
+    if(keysPressed['arrowleft'] || keysPressed['a']) {
+      rover.rotation.y += 0.05;
+    }
+    if(keysPressed['arrowright'] || keysPressed['d']) {
+      rover.rotation.y -= 0.05;
+    }
+
+    // Keep rover above surface
+    rover.position.y = 0.5;
+
+    // Update camera target to rover
+    controls.target.copy(rover.position);
+    controls.update();
+
+    renderer.render(scene, camera);
+  }
+
+  animate();
+
+  // Handle window resize
+  window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth/window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+</script>
+</body>
+</html>
