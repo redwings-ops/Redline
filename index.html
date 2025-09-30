@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+<title>Mars Rover Waste Simulator</title>
+<style>
+  body, html {
+    margin: 0; padding: 0; overflow: hidden; background: #220a00;
+    font-family: Arial, sans-serif;
+    user-select: none;
+  }
+  #gameCanvas {
+    background: linear-gradient(to top, #b5522a 0%, #d97b4a 70%, #f0cba8 100%);
+    display: block;
+    margin: 0 auto;
+    touch-action: none;
+  }
+  #ui {
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    background: rgba(0,0,0,0.7);
+    color: white;
+    font-size: 14px;
+    padding: 8px;
+    display: flex;
+    justify-content: space-around;
+    flex-wrap: wrap;
+  }
+  .btn {
+    background: #444;
+    border-radius: 5px;
+    padding: 10px 15px;
+    margin: 5px;
+    color: white;
+    font-weight: bold;
+    user-select: none;
+  }
+  .btn:active {
+    background: #666;
+  }
+  #instructions {
+    position: fixed;
+    top: 5px; left: 5px;
+    background: rgba(0,0,0,0.6);
+    color: white;
+    padding: 8px;
+    font-size: 12px;
+    max-width: 300px;
+    border-radius: 5px;
+  }
+</style>
+</head>
+<body>
+
+<canvas id="gameCanvas" width="480" height="320"></canvas>
+
+<div id="ui">
+  <div>Plastic: <span id="plasticCount">0</span></div>
+  <div>Metal: <span id="metalCount">0</span></div>
+  <div>Organic: <span id="organicCount">0</span></div>
+  <div>Filament: <span id="filamentCount">0</span></div>
+  <div>Ingots: <span id="ingotsCount">0</span></div>
+  <div>Fuel: <span id="fuelCount">0</span></div>
+</div>
+
+<div id="instructions">
+  <b>Controls:</b><br>
+  Arrow keys or WASD to move rover.<br>
+  Tap/click waste to pick up when close.<br>
+  Move rover to recycle machine to process waste.<br>
+  On mobile, use buttons below:<br>
+</div>
+
+<div id="mobileControls" style="position: fixed; bottom: 60px; left: 50%; transform: translateX(-50%); user-select:none;">
+  <button class="btn" id="upBtn">▲</button><br>
+  <button class="btn" id="leftBtn">◄</button>
+  <button class="btn" id="downBtn">▼</button>
+  <button class="btn" id="rightBtn">►</button>
+</div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('gameCanvas');
+  const ctx = canvas.getContext('2d');
+
+  // Game constants
+  const WIDTH = canvas.width;
+  const HEIGHT = canvas.height;
+
+  // Rover properties
+  const rover = {
+    x: WIDTH / 2,
+    y: HEIGHT - 50,
+    width: 30,
+    height: 20,
+    speed: 2,
+    carrying: { plastic: 0, metal: 0, organic: 0 },
+  };
+
+  // Recycle machine position
+  const recycleMachine = {
+    x: WIDTH - 70,
+    y: HEIGHT - 70,
+    width: 50,
+    height: 50,
+  };
+
+  // Waste types and colors
+  const wasteTypes = [
+    { type: 'plastic', color: '#00ccff' },
+    { type: 'metal', color: '#aaaaaa' },
+    { type: 'organic', color: '#55aa33' },
+  ];
+
+  // Waste items scattered on surface
+  const wasteItems = [];
+
+  // Produced materials
+  const produced = {
+    filament: 0,
+    ingots: 0,
+    fuel: 0,
+  };
+
+  // Generate random waste on surface
+  function generateWaste(num = 15) {
+    for (let i = 0; i < num; i++) {
+      const w = wasteTypes[Math.floor(Math.random() * wasteTypes.length)];
+      wasteItems.push({
+        x: Math.random() * (WIDTH - 40) + 20,
+        y: Math.random() * (HEIGHT - 120) + 20,
+        type: w.type,
+        color: w.color,
+        radius: 8,
+        picked: false,
+      });
+    }
+  }
+
+  generateWaste();
+
+  // Input handling
+  const keys = {};
+  window.addEventListener('keydown', e => {
+    keys[e.key.toLowerCase()] = true;
+  });
+  window.addEventListener('keyup', e => {
+    keys[e.key.toLowerCase()] = false;
+  });
+
+  // Mobile buttons
+  const btnUp = document.getElementById('upBtn');
+  const btnDown = document.getElementById('downBtn');
+  const btnLeft = document.getElementById('leftBtn');
+  const btnRight = document.getElementById('rightBtn');
+
+  btnUp.addEventListener('touchstart', e => { e.preventDefault(); keys['arrowup'] = true; keys['w'] = true; });
+  btnUp.addEventListener('touchend', e => { e.preventDefault(); keys['arrowup'] = false; keys['w'] = false; });
+  btnDown.addEventListener('touchstart', e => { e.preventDefault(); keys['arrowdown'] = true; keys['s'] = true; });
+  btnDown.addEventListener('touchend', e => { e.preventDefault(); keys['arrowdown'] = false; keys['s'] = false; });
+  btnLeft.addEventListener('touchstart', e => { e.preventDefault(); keys['arrowleft'] = true; keys['a'] = true; });
+  btnLeft.addEventListener('touchend', e => { e.preventDefault(); keys['arrowleft'] = false; keys['a'] = false; });
+  btnRight.addEventListener('touchstart', e => { e.preventDefault(); keys['arrowright'] = true; keys['d'] = true; });
+  btnRight.addEventListener('touchend', e => { e.preventDefault(); keys['arrowright'] = false; keys['d'] = false; });
+
+  // Update UI counts
+  function updateUI() {
+    document.getElementById('plasticCount').textContent = rover.carrying.plastic;
+    document.getElementById('metalCount').textContent = rover.carrying.metal;
+    document.getElementById('organicCount').textContent = rover.carrying.organic;
+    document.getElementById('filamentCount').textContent = produced.filament;
+    document.getElementById('ingotsCount').textContent = produced.ingots;
+    document.getElementById('fuelCount').textContent = produced.fuel;
+  }
+
+  // Distance helper
+  function dist(x1, y1, x2, y2) {
+    return Math.hypot(x2 - x1, y2 - y1);
+  }
+
+  // Rover movement
+  function moveRover() {
+    let dx = 0, dy = 0;
+    if (keys['arrowup'] || keys['w']) dy -= rover.speed;
+    if (keys['arrowdown'] || keys['s']) dy += rover.speed;
+    if (keys['arrowleft'] || keys['a']) dx -= rover.speed;
+    if (keys['arrowright'] || keys['d']) dx += rover.speed;
+
+    // Normalize diagonal speed
+    if (dx !== 0 && dy !== 0) {
+      dx *= Math.SQRT1_2;
+      dy *= Math.SQRT1_2;
+    }
+
+    rover.x += dx;
+    rover.y += dy;
+
+    // Keep rover inside canvas
+    rover.x = Math.min(Math.max(rover.width / 2, rover.x), WIDTH - rover.width / 2);
+    rover.y = Math.min(Math.max(rover.height / 2, rover.y), HEIGHT - rover.height / 2);
+  }
+
+  // Check if rover is near waste to pick up
+  function tryPickWaste() {
+    for (const w of wasteItems) {
+      if (!w.picked && dist(rover.x, rover.y, w.x, w.y) < 20) {
+        // Pick up waste
+        rover.carrying[w.type]++;
+        w.picked = true;
+        updateUI();
+        break;
+      }
+    }
+  }
+
+  // Check if rover is near recycle machine to process waste
+  function tryRecycle() {
+    if (dist(rover.x, rover.y, recycleMachine.x + recycleMachine.width/2, recycleMachine.y + recycleMachine.height/2) < 40) {
+      // Process all carried waste
+      produced.filament += rover.carrying.plastic;
+      produced.ingots += rover.carrying.metal;
+      produced.fuel += rover.carrying.organic;
+
+      rover.carrying.plastic = 0;
+      rover.carrying.metal = 0;
+      rover.carrying.organic = 0;
+
+      updateUI();
+    }
+  }
+
+  // Draw rover
+  function drawRover() {
+    ctx.save();
+    ctx.translate(rover.x, rover.y);
+    ctx.fillStyle = '#ffcc00';
+    ctx.strokeStyle = '#aa8800';
+    ctx.lineWidth = 2;
+    ctx.fillRect(-rover.width/2, -rover.height/2, rover.width, rover.height);
+    ctx.strokeRect(-rover.width/2, -rover.height/2, rover.width, rover.height);
+
+    // Draw wheels
+    ctx.fillStyle = '#333';
+    const wheelRadius = 5;
+    ctx.beginPath();
+    ctx.arc(-rover.width/2 + 5, rover.height/2, wheelRadius, 0, Math.PI * 2);
+    ctx.arc(rover.width/2 - 5, rover.height/2, wheelRadius, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Draw carried waste icons on rover
+    const iconSize = 6;
+    let offsetX = -rover.width/2 + 5;
+    let offsetY = -rover.height/2 - 10;
+    for (const type of wasteTypes) {
+      const count = rover.carrying[type.type];
+      if (count > 0) {
+        ctx.fillStyle = type.color;
+        ctx.fillRect(offsetX, offsetY, iconSize, iconSize);
+        ctx.fillStyle = 'white';
+        ctx.font = '10px Arial';
+        ctx.fillText(count, offsetX + iconSize + 2, offsetY + iconSize);
+        offsetX += 25;
+      }
+    }
+
+    ctx.restore();
+  }
+
+  // Draw recycle machine
+  function drawRecycleMachine() {
+    ctx.save();
+    ctx.fillStyle = '#4444cc';
+    ctx.strokeStyle = '#222288';
+    ctx.lineWidth = 3;
+    ctx.fillRect(recycleMachine.x, recycleMachine.y, recycleMachine.width, recycleMachine.height);
+    ctx.strokeRect(recycleMachine.x, recycleMachine.y, recycleMachine.width, recycleMachine.height);
+
+    // Draw icons for outputs
+    ctx.fillStyle = '#00ccff'; // filament (plastic)
+    ctx.fillRect(recycleMachine.x + 5, recycleMachine.y + 5, 10, 10);
+    ctx.fillStyle = '#aaaaaa'; // ingots (metal)
+    ctx.fillRect(recycleMachine.x + 20, recycleMachine.y + 5, 10, 10);
+    ctx.fillStyle = '#55aa33'; // fuel (organic)
+    ctx.fillRect(recycleMachine.x + 35, recycleMachine.y + 5, 10, 10);
+
+    ctx.restore();
+  }
+
+  // Draw waste items
+  function drawWaste() {
+    for (const w of wasteItems) {
+      if (!w.picked) {
+        ctx.beginPath();
+        ctx.fillStyle = w.color;
+        ctx.strokeStyle = '#222';
+        ctx.lineWidth = 1;
+        ctx.arc(w.x, w.y, w.radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      }
+    }
+  }
+
+  // Main game loop
+  function gameLoop() {
+    ctx.clearRect(0, 0, WIDTH, HEIGHT);
+
+    // Draw surface (Mars ground)
+    ctx.fillStyle = '#b5522a';
+    ctx.fillRect(0, HEIGHT - 40, WIDTH, 40);
+
+    moveRover();
+    tryRecycle();
+
+    drawWaste();
+    drawRecycleMachine();
+    drawRover();
+
+    requestAnimationFrame(gameLoop);
+  }
+
+  // Canvas click/touch to pick waste if close
+  canvas.addEventListener('click', e => {
+    const rect = canvas.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const clickY = e.clientY - rect.top;
+
+    // Check if click is near rover and near waste
+    for (const w of wasteItems) {
+      if (!w.picked && dist(clickX, clickY, w.x, w.y) < 15 && dist(rover.x, rover.y, w.x, w.y) < 30) {
+        rover.carrying[w.type]++;
+        w.picked = true;
+        updateUI();
+        break;
+      }
+    }
+  });
+
+  // Touch support for picking waste
+  canvas.addEventListener('touchstart', e => {
+    e.preventDefault();
+    const rect = canvas.getBoundingClientRect();
+    const touch = e.touches[0];
+    const touchX = touch.clientX - rect.left;
+    const touchY = touch.clientY - rect.top;
+
+    for (const w of wasteItems) {
+      if (!w.picked && dist(touchX, touchY, w.x, w.y) < 15 && dist(rover.x, rover.y, w.x, w.y) < 30) {
+        rover.carrying[w.type]++;
+        w.picked = true;
+        updateUI();
+        break;
+      }
+    }
+  }, { passive: false });
+
+  updateUI();
+  gameLoop();
+})();
+</script>
+
+</body>
+</html>
