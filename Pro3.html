@@ -1,0 +1,322 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Mars Rover Recycling — Demo</title>
+<style>
+  html,body { height:100%; margin:0; background:#0b0b12; color:#fff; font-family: Arial, Helvetica, sans-serif; }
+  #game { display:block; margin:0 auto; background:#16202a; border:8px solid #0d1114; width:900px; height:600px; }
+  #ui { width:900px; margin:10px auto; display:flex; justify-content:space-between; align-items:center; }
+  button { background:#2b7; border:none; padding:8px 12px; border-radius:6px; cursor:pointer; }
+  .info { font-size:14px; }
+</style>
+</head>
+<body>
+<canvas id="game" width="900" height="600"></canvas>
+<div id="ui">
+  <div class="info">Score: <span id="score">0</span> • Carrying: <span id="carrying">none</span></div>
+  <div>
+    <button id="reset">Reset</button>
+    <small style="margin-left:12px;color:#bbb">Controls: ← → (move), ↑ / Space (jump), E (interact)</small>
+  </div>
+</div>
+
+<script>
+/*
+  Mars Rover Recycling - Single file demo
+  - Replace placeholder images / sprites below with your rover textures from the Orbiter repo.
+  - Interaction: Move rover, collect waste, take to machine, press E to enter machine view and load items.
+*/
+
+/* ------------------------
+   Configuration / Assets
+   ------------------------ */
+
+// NOTE: these demo assets are drawn procedurally. To use orbiter repo textures:
+// 1) From the orbiter repo's Textures or Meshes, extract an appropriate image (PNG/JPG).
+// 2) Put it into the same folder as this index.html and set roverImg.src = 'my_rover.png' etc.
+//
+// Repo info: Orbiter repo has folders like Textures and Meshes (see repository root). :contentReference[oaicite:1]{index=1}
+
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const W = canvas.width, H = canvas.height;
+
+let score = 0;
+let carrying = null;
+document.getElementById('score').innerText = score;
+document.getElementById('carrying').innerText = 'none';
+
+const keys = {};
+window.addEventListener('keydown', e => { keys[e.key.toLowerCase()] = true; });
+window.addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
+
+document.getElementById('reset').addEventListener('click', resetGame);
+
+/* ------------------------
+   Game state
+   ------------------------ */
+
+let rover = {
+  x: 120, y: H-120, w: 64, h: 40,
+  vx: 0, vy: 0, speed: 3.2, onGround: false
+};
+
+const gravity = 0.45;
+
+const wastes = []; // {x,y,type, picked}
+const machine = { x: W-180, y: H-160, w: 140, h: 140 };
+
+let inMachineView = false;
+let machineInventory = { plastic:0, metal:0, organic:0 };
+
+/* ------------------------
+   Procedural placeholders
+   ------------------------ */
+
+function spawnWaste(x, y, type) {
+  wastes.push({ x, y, w:28, h:28, type, picked:false });
+}
+
+function resetGame() {
+  score = 0;
+  carrying = null;
+  document.getElementById('score').innerText = score;
+  document.getElementById('carrying').innerText = 'none';
+  wastes.length = 0;
+  machineInventory = { plastic:0, metal:0, organic:0 };
+  inMachineView = false;
+  rover.x = 120; rover.y = H-120; rover.vx = rover.vy = 0;
+  // spawn demo wastes
+  spawnWaste(300, H-120, 'plastic');
+  spawnWaste(420, H-120, 'metal');
+  spawnWaste(520, H-120, 'organic');
+  spawnWaste(680, H-120, 'plastic');
+}
+resetGame();
+
+/* ------------------------
+   Drawing helpers
+   ------------------------ */
+
+function drawRover(x,y,w,h) {
+  // Placeholder rover: draw wheels + body. Replace with image by loading an <img> and drawing with drawImage.
+  ctx.save();
+  // body
+  ctx.fillStyle = '#b5651d';
+  roundRect(ctx, x-16, y-26, w, h-6, 6, true, false);
+  ctx.fillStyle = '#8f4b12';
+  ctx.fillRect(x-4, y-30, w-20, 6);
+  // wheels
+  ctx.fillStyle = '#333';
+  ctx.beginPath(); ctx.arc(x-12, y+h-6, 12, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(x+34, y+h-6, 12, 0, Math.PI*2); ctx.fill();
+  ctx.restore();
+}
+
+function drawWaste(w) {
+  ctx.save();
+  if (w.type === 'plastic') ctx.fillStyle = '#55aaff';
+  if (w.type === 'metal') ctx.fillStyle = '#bfbfbf';
+  if (w.type === 'organic') ctx.fillStyle = '#7bbf4b';
+  ctx.beginPath();
+  ctx.rect(w.x - w.w/2, w.y - w.h/2, w.w, w.h);
+  ctx.fill();
+  // icon letter
+  ctx.fillStyle = '#072';
+  ctx.font = 'bold 12px Arial';
+  ctx.textAlign = 'center';
+  ctx.fillText(w.type[0].toUpperCase(), w.x, w.y + 4);
+  ctx.restore();
+}
+
+function drawMachine(x,y,w,h) {
+  ctx.save();
+  // body
+  ctx.fillStyle = '#394a63';
+  roundRect(ctx, x, y, w, h, 12, true, false);
+  // slot
+  ctx.fillStyle = '#1a2430';
+  roundRect(ctx, x+18, y+28, w-36, 40, 6, true, false);
+  // panel text
+  ctx.fillStyle = '#cfe7ff';
+  ctx.font = '14px Arial';
+  ctx.textAlign = 'center';
+  ctx.fillText('RECYCLER', x + w/2, y+18);
+  // counts
+  ctx.font = '12px Arial';
+  ctx.fillText(`P:${machineInventory.plastic} M:${machineInventory.metal} O:${machineInventory.organic}`, x + w/2, y+h-18);
+  ctx.restore();
+}
+
+function roundRect(ctx, x, y, w, h, r, fill, stroke) {
+  if (typeof r === 'undefined') r = 5;
+  ctx.beginPath();
+  ctx.moveTo(x+r, y);
+  ctx.arcTo(x+w, y, x+w, y+h, r);
+  ctx.arcTo(x+w, y+h, x, y+h, r);
+  ctx.arcTo(x, y+h, x, y, r);
+  ctx.arcTo(x, y, x+w, y, r);
+  ctx.closePath();
+  if (fill) ctx.fill();
+  if (stroke) ctx.stroke();
+}
+
+/* ------------------------
+   Main loop
+   ------------------------ */
+
+function update() {
+  if (!inMachineView) {
+    // controls
+    rover.vx = 0;
+    if (keys['arrowleft'] || keys['a']) rover.vx = -rover.speed;
+    if (keys['arrowright'] || keys['d']) rover.vx = rover.speed;
+    if ((keys['arrowup'] || keys[' '] || keys['w']) && rover.onGround) {
+      rover.vy = -9.2; rover.onGround = false;
+    }
+
+    // physics
+    rover.vy += gravity;
+    rover.x += rover.vx;
+    rover.y += rover.vy;
+
+    // ground collision
+    const groundY = H - 80;
+    if (rover.y + rover.h/2 >= groundY) {
+      rover.y = groundY - rover.h/2;
+      rover.vy = 0;
+      rover.onGround = true;
+    }
+
+    // bounds
+    if (rover.x < 20) rover.x = 20;
+    if (rover.x > W - 20) rover.x = W - 20;
+
+    // collect waste if overlapping and not carrying
+    for (let w of wastes) {
+      if (w.picked) continue;
+      if (rectIntersect(rover.x-16, rover.y-26, rover.w, rover.h-6, w.x-w.w/2, w.y-w.h/2, w.w, w.h)) {
+        if (!carrying) {
+          // pick up automatically
+          carrying = w.type;
+          w.picked = true;
+          document.getElementById('carrying').innerText = carrying;
+        }
+      }
+    }
+
+    // if at machine entrance and press E -> enter machine view
+    if (rectIntersect(rover.x-16, rover.y-26, rover.w, rover.h-6, machine.x, machine.y, machine.w, machine.h)) {
+      if (keys['e']) {
+        inMachineView = true;
+        // simple enter delay
+        keys['e'] = false;
+      }
+    }
+  } else {
+    // machine view controls
+    // press E to load currently carried item
+    if (keys['e']) {
+      if (carrying) {
+        machineInventory[carrying] += 1;
+        score += carrying === 'plastic' ? 5 : carrying === 'metal' ? 10 : 7;
+        carrying = null;
+        document.getElementById('score').innerText = score;
+        document.getElementById('carrying').innerText = 'none';
+        // small delay to avoid repeated loads
+        keys['e'] = false;
+      } else {
+        // exit machine view if nothing to load
+        inMachineView = false;
+        keys['e'] = false;
+      }
+    }
+    // allow exit with Esc
+    if (keys['escape']) { inMachineView = false; keys['escape'] = false; }
+  }
+}
+
+function rectIntersect(x1,y1,w1,h1,x2,y2,w2,h2){
+  return !(x2 > x1 + w1 || x2 + w2 < x1 || y2 > y1 + h1 || y2 + h2 < y1);
+}
+
+function draw() {
+  // background
+  ctx.clearRect(0,0,W,H);
+
+  // sky / horizon
+  const grad = ctx.createLinearGradient(0,0,0,H);
+  grad.addColorStop(0, '#0b1724');
+  grad.addColorStop(1, '#2b2a2d');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0,0,W,H);
+
+  if (!inMachineView) {
+    // ground
+    ctx.fillStyle = '#3a2f2b';
+    ctx.fillRect(0, H-80, W, 80);
+
+    // draw wastes
+    for (let w of wastes) {
+      if (!w.picked) drawWaste(w);
+    }
+
+    // draw machine
+    drawMachine(machine.x, machine.y, machine.w, machine.h);
+
+    // draw rover
+    drawRover(rover.x, rover.y, rover.w, rover.h);
+
+    // HUD
+    ctx.fillStyle = '#fff';
+    ctx.font = '12px Arial';
+    ctx.textAlign = 'left';
+    ctx.fillText('Approach the recycler and press E to interact', 12, 20);
+
+  } else {
+    // machine front view
+    ctx.fillStyle = '#081018';
+    ctx.fillRect(0,0,W,H);
+
+    // big machine slot
+    ctx.save();
+    ctx.translate(W/2 - 200, H/2 - 150);
+    drawMachine(0,0,400,300);
+    ctx.restore();
+
+    ctx.fillStyle = '#fff';
+    ctx.font = '16px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('Machine View — Press E to load carried item. Press Esc to exit.', W/2, 40);
+    ctx.fillText(`Machine contents — Plastic: ${machineInventory.plastic}  Metal: ${machineInventory.metal}  Organic: ${machineInventory.organic}`, W/2, H - 40);
+
+    // show an animation of loaded items
+    ctx.save();
+    ctx.translate(W/2 - 120, H/2);
+    for (let i=0;i<machineInventory.plastic;i++){
+      ctx.fillStyle = '#55aaff';
+      ctx.fillRect(i*24, -20, 18, 18);
+    }
+    for (let i=0;i<machineInventory.metal;i++){
+      ctx.fillStyle = '#bfbfbf';
+      ctx.fillRect(120 + i*24, -20, 18, 18);
+    }
+    for (let i=0;i<machineInventory.organic;i++){
+      ctx.fillStyle = '#7bbf4b';
+      ctx.fillRect(240 + i*24, -20, 18, 18);
+    }
+    ctx.restore();
+  }
+}
+
+function loop() {
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+loop();
+</script>
+</body>
+</html>
